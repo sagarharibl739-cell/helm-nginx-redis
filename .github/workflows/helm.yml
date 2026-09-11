@@ -7,41 +7,86 @@ on:
 
 jobs:
   deploy:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     steps:
 
+      # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      # 3. Check AWS CLI
       - name: Check AWS
         run: |
           aws --version
+          aws sts get-caller-identity
 
+      # 4. Configure Kubernetes kubeconfig
       - name: Configure kubeconfig
         run: |
           aws eks update-kubeconfig \
             --region us-east-1 \
             --name demo-cluster
 
+      # 5. Check Kubernetes
       - name: Check Kubernetes
         run: |
+          kubectl version --client
           kubectl get nodes
 
+      # 6. Check Helm
       - name: Helm version
         run: |
           helm version
 
+      # 7. Create namespace if it doesn't exist
+      - name: Create dev namespace
+        run: |
+          kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
+
+      # 8. Deploy NGINX
       - name: Deploy NGINX
         run: |
-          helm upgrade --install myapp ./myapp -n dev
+          helm upgrade --install myapp ./myapp \
+            --namespace dev \
+            --create-namespace \
+            --wait
 
+      # 9. Deploy Redis
       - name: Deploy Redis
         run: |
-          helm upgrade --install redis ./redis-chart -n dev
+          helm upgrade --install redis ./redis-chart \
+            --namespace dev \
+            --create-namespace \
+            --wait
 
+      # 10. Verify deployments
       - name: Verify deployments
         run: |
-          kubectl get pods
-          kubectl get svc
-          helm list
+          echo "===== Kubernetes Nodes ====="
+          kubectl get nodes
+
+          echo "===== Pods ====="
+          kubectl get pods -n dev
+
+          echo "===== Services ====="
+          kubectl get svc -n dev
+
+          echo "===== Deployments ====="
+          kubectl get deployments -n dev
+
+          echo "===== Helm Releases ====="
+          helm list -n dev
+
+      # 11. Verify rollout
+      - name: Verify rollout
+        run: |
+          kubectl rollout status deployment/myapp -n dev --timeout=180s || true
